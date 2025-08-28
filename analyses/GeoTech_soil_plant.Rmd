@@ -1,0 +1,114 @@
+---
+title: "West Research Campus GeoTech Plant vs. No Plant Soil Cores"
+author: "Colin G. Finlay"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+---
+# Setup
+
+```{r setup, include=FALSE}
+rm(list=ls())
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE)
+#use to set working directory 
+knitr::opts_knit$set(root.dir="~/GitHub/WRC_GeoTech_Plant_v_NoPlant/analyses/")
+```
+
+# Load packages and functions
+```{r Load packages and functions}
+# Packages
+require("tidyverse")
+require("rstatix")
+require("ggpubr")
+```
+
+# Load files
+
+```{r Read in files}
+# Experiment Start (6 June 2025) Terros 12 data:
+Soil_Start <- read.csv("../data/Start_SoilData.csv", header = T)
+
+# Experiment End (8 July 2025) Terros 12 and plant biomass data:
+SoilPlantDesign_End <- read.csv("../data/Final_SoilPlantDataForR.csv", header = T)
+```
+
+# Wrangling
+```{r}
+# Add date columns
+Soil_Start$Date <- as.Date("2025-06-06")  # ISO-8601 string → Date
+SoilPlantDesign_End$Date <- as.Date("2025-07-08")
+
+# Creat July 8th data frame without plant data, to enable merging Terros 12 data
+Soil_End <- SoilPlantDesign_End %>%
+  dplyr::select(colnames(Soil_Start))
+
+# Combine
+Soil_combined <- rbind(Soil_Start, Soil_End)
+
+# Quick check
+str(Soil_combined$Date) # Date[1:66], format: "2025-06-06" "2025-06-06" ... "2025-07-08"]
+
+# Create a Plant only data frame:
+SoilPlantONLYDesign_End <- SoilPlantDesign_End %>%
+  dplyr::filter(!is.na(AboveGround))
+```
+
+
+# Assumption testing
+
+```{r Normality}
+# Moisture
+Soil_combined %>%
+  group_by(Date) %>%
+  shapiro_test(Moisture_m3_m3)
+  # Not normally distributed
+
+  # QQ plot:
+ggqqplot(Soil_combined, "Moisture_m3_m3")
+
+ggqqplot(Soil_combined, "Moisture_m3_m3", facet.by = "Date")
+
+# Temperature
+Soil_combined %>%
+  group_by(Date) %>%
+  shapiro_test(Temperature_degC)
+  # Normally distributed
+
+  # QQ plot:
+ggqqplot(Soil_combined, "Temperature_degC")
+
+ggqqplot(Soil_combined, "Temperature_degC", facet.by = "Date")
+
+# Conductivity
+Soil_combined %>%
+  group_by(Date) %>%
+  shapiro_test(Conductivity_mS_cm)
+  # Normally distributed
+
+  # QQ plot:
+ggqqplot(Soil_combined, "Conductivity_mS_cm")
+
+ggqqplot(Soil_combined, "Conductivity_mS_cm", facet.by = "Date")
+
+# Plant above ground biomass
+SoilPlantONLYDesign_End %>%
+  shapiro_test(AboveGround)
+  # Not Normally distributed, largely due to one outlier
+
+  # QQ plot:
+ggqqplot(SoilPlantDesign_End, "AboveGround")
+
+# Plant below ground biomass
+SoilPlantONLYDesign_End %>%
+  shapiro_test(BelowGround)
+  # Normally distributed
+
+  # QQ plot:
+ggqqplot(SoilPlantDesign_End, "BelowGround")
+```
+
+```{r}
+
+```
+
