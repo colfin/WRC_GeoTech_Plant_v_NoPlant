@@ -21,6 +21,15 @@ knitr::opts_knit$set(root.dir="~/GitHub/WRC_GeoTech_Plant_v_NoPlant/analyses/")
 require("tidyverse")
 require("rstatix")
 require("ggpubr")
+require("stringr")
+
+# Stat (Copilot workflow)
+require("lme4")
+require("lmerTest")
+require("emmeans")
+require("performance")
+require("purrr")
+require("vegan")
 ```
 
 # Load files
@@ -34,10 +43,16 @@ SoilPlantDesign_End <- read.csv("../data/Final_SoilPlantDataForR.csv", header = 
 ```
 
 # Wrangling
+
+
+
 ```{r}
-# Add date columns
+# Add date and "time" columns
 Soil_Start$Date <- as.Date("2025-06-06")  # ISO-8601 string → Date
+Soil_Start$time <- "start"
+
 SoilPlantDesign_End$Date <- as.Date("2025-07-08")
+SoilPlantDesign_End$time <- "end"
 
 # Creat July 8th data frame without plant data, to enable merging Terros 12 data
 Soil_End <- SoilPlantDesign_End %>%
@@ -54,6 +69,20 @@ SoilPlantONLYDesign_End <- SoilPlantDesign_End %>%
   dplyr::filter(!is.na(AboveGround))
 ```
 
+```{r balance design}
+# Remove "practice" samples to get balanced, 32 core design:
+  # Soil_combined
+Soil_combined_BAL <- Soil_combined %>%
+  dplyr::filter(Sample_ID != c("GT_1MF_Pr_NP", "GT_2MF_Pr_Sh"))
+
+dim(Soil_combined_BAL) # 64 9
+
+  # SoilPlantONLYDesign_End
+SoilPlantONLYDesign_End_BAL <- SoilPlantONLYDesign_End %>%
+  dplyr::filter(Sample_ID != "GT_2MF_Pr_Sh")
+
+dim(SoilPlantONLYDesign_End_BAL) # 16 13
+```
 
 # Assumption testing
 
@@ -108,7 +137,114 @@ SoilPlantONLYDesign_End %>%
 ggqqplot(SoilPlantDesign_End, "BelowGround")
 ```
 
+# CoPilot workflow
+
+```{r Add block numbers}
+# Repeated measures DF
+  # Add Block
+Soil_combined_BAL <- Soil_combined_BAL %>%
+  mutate(block = str_extract(Plot_number, "\\d+"))
+
+SoilPlantONLYDesign_End_BAL <- SoilPlantONLYDesign_End_BAL %>%
+  mutate(block = str_extract(Plot_number, "\\d+"))
+
+```
+
+```{r set factors}
+# block
+Soil_combined_BAL$block <- as.factor(Soil_combined_BAL$block)
+
+SoilPlantONLYDesign_End_BAL$block <- as.factor(SoilPlantONLYDesign_End_BAL$block)
+
+# Plot_number
+Soil_combined_BAL$Plot_number <- as.factor(Soil_combined_BAL$Plot_number)
+
+SoilPlantONLYDesign_End_BAL$Plot_number <- as.factor(SoilPlantONLYDesign_End_BAL$Plot_number)
+
+# Hydrology
+Soil_combined_BAL$Hydrology_wet_dry <- as.factor(Soil_combined_BAL$Hydrology_wet_dry)
+
+SoilPlantONLYDesign_End_BAL$Hydrology_wet_dry <- as.factor(SoilPlantONLYDesign_End_BAL$Hydrology_wet_dry)
+
+# Fertilization
+Soil_combined_BAL$Fertilization <- as.factor(Soil_combined_BAL$Fertilization)
+
+SoilPlantONLYDesign_End_BAL$Fertilization <- as.factor(SoilPlantONLYDesign_End_BAL$Fertilization)
+
+# Plant
+Soil_combined_BAL$Plants <- as.factor(Soil_combined_BAL$Plants)
+
+SoilPlantONLYDesign_End_BAL$Plants <- as.factor(SoilPlantONLYDesign_End_BAL$Plants)
+
+# Time
+Soil_combined_BAL$time <- as.factor(Soil_combined_BAL$time)
+
+SoilPlantONLYDesign_End_BAL$time <- as.factor(SoilPlantONLYDesign_End_BAL$time)
+```
+
+```{r sum-to-zero contrasts for Type III tests}
+options(contrasts = c("contr.sum","contr.poly"))
+```
+
+1) Repeated-measures outcomes (moisture, temperature, conductivity)
+Model: full factorial with time
+For each response 
+y
+∈
+{
+y∈{moisture, temperature, conductivity
+}
+}:
+
+Fixed: dry * fert * plant * time
+Random: (1 | block) + (1 | plot_id)
+
+```{r Mixed effects model and diagnostics}
+rep_vars <- c("Moisture_m3_m3","Temperature_degC","Conductivity_mS_cm")
+
+fit_lmm_rep <- function(var) {
+  f <- as.formula(paste0(var, " ~ Hydrology_wet_dry * Fertilization * Plants * time + (1|block) + (1|Plot_number)"))
+  lmer(f, data = Soil_combined_BAL, REML = TRUE)
+}
+
+mods_rep <- setNames(lapply(rep_vars, fit_lmm_rep), rep_vars) # Singular fits, so drop a random effect
+
+fit_lmm_rep <- function(var) {
+  f <- as.formula(paste0(var, " ~ Hydrology_wet_dry * Fertilization * Plants * time + (1|block)"))
+  lmer(f, data = Soil_combined_BAL, REML = TRUE)
+}
+
+mods_rep <- setNames(lapply(rep_vars, fit_lmm_rep), rep_vars)
+
+# Kenward–Roger tests (Type III table)
+anova_rep <- lapply(mods_rep, \(m) anova(m, ddf = "Kenward-Roger", type = 3))
+
+# Model summaries & diagnostics
+r2_rep   <- lapply(mods_rep, performance::r2)
+r2_rep
+check_rep <- lapply(mods_rep, performance::check_model) # creates diagnostic plots
+check_rep # opens diagnostic plots
+```
+
+```{r Post hoc}
+# Moisture
+m_moist <- mods_rep$Moisture_m3_m3
+emm <- emmeans(m_moist, ~ Hydrology_wet_dry | Fertilization * Plants * time)
+pairs(emm, adjust = "tukey")
+# Plots
+emmip(m_moist, Fertilization ~ Hydrology_wet_dry | Plants * time, CIs = TRUE) + theme_minimal()
+
+# Temperature
+
+# Conductivity
+```
+
+2) Single-time outcomes (AGB, BGB)
+
 ```{r}
 
 ```
+
+
+
 
